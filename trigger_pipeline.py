@@ -1,0 +1,563 @@
+#!/usr/bin/env python3
+"""
+ETL Pipeline Trigger for Stock Data Intraday Processing
+Main entry point for triggering ETL operations and real-time data streaming
+Simulates "real-time" ingestion through periodic polling
+"""
+
+import logging
+import signal
+import sys
+import os
+from datetime import datetime
+from typing import List, Dict, Optional, Any
+from dotenv import load_dotenv
+
+from alpha_vantage_intraday.DB import init_db
+from alpha_vantage_intraday.intraday_pipeline import ETLService
+from alpha_vantage_intraday.DATA_STREAMING import DataStreamingService, PollingManager, MarketScheduler
+
+# Load environment variables
+load_dotenv()
+
+# Configure logging
+log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
+logging.basicConfig(
+    level=getattr(logging, log_level),
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+
+logger = logging.getLogger(__name__)
+
+class ETLRunner:
+    """ETL Pipeline Trigger for periodic intraday data processing and real-time streaming"""
+    
+    def __init__(self):
+        self.is_running = False
+        self.etl_service = ETLService()
+        
+        # Load configuration from environment variables
+        self.default_interval = os.getenv('DEFAULT_INTERVAL', '5min')
+        self.default_polling_interval = int(os.getenv('DEFAULT_POLLING_INTERVAL', '5'))
+        self.batch_size = int(os.getenv('BATCH_SIZE', '10'))
+        
+
+        
+        # Initialize streaming services
+        self.streaming_service = DataStreamingService()
+        self.polling_manager = PollingManager()
+        self.market_scheduler = MarketScheduler()
+        
+        # Signal handlers for graceful shutdown
+        signal.signal(signal.SIGINT, self._signal_handler)
+        signal.signal(signal.SIGTERM, self._signal_handler)
+    
+    def _signal_handler(self, signum, frame):
+        """Handle shutdown signals gracefully"""
+        logger.info(f"Received signal {signum}, shutting down gracefully...")
+        self.stop()
+        sys.exit(0)
+    
+    def process_single_stock(self, symbol: str, interval: str = None) -> int:
+        if interval is None:
+            interval = self.default_interval
+        """Process a single stock for intraday data"""
+        try:
+            logger.info(f"Processing intraday data for {symbol} with {interval} interval")
+            records_processed = self.etl_service.process_stock_intraday(symbol, interval)
+            logger.info(f"Completed processing {symbol}. Records processed: {records_processed}")
+            return records_processed
+        except Exception as e:
+            logger.error(f"Failed to process {symbol}: {e}")
+            return 0
+    
+    def process_batch_stocks(self, symbols: List[str], interval: str = None) -> Dict[str, int]:
+        if interval is None:
+            interval = self.default_interval
+        """Process multiple stocks for intraday data"""
+        try:
+            logger.info(f"Processing batch intraday data for {len(symbols)} stocks with {interval} interval")
+            results = self.etl_service.process_multiple_stocks_intraday(symbols, interval)
+            
+            total_processed = sum(results.values())
+            logger.info(f"Batch processing completed. Total records processed: {total_processed}")
+            
+            # Log individual results
+            for symbol, count in results.items():
+                logger.info(f"  {symbol}: {count}")
+            
+            return results
+        except Exception as e:
+            logger.error(f"Batch processing failed: {e}")
+            return {}
+    
+    def run_etl_pipeline(self, symbols: List[str], interval: str = None) -> Dict[str, Any]:
+        if interval is None:
+            interval = self.default_interval
+        """Run the complete ETL pipeline with detailed statistics"""
+        try:
+            logger.info(f"Running complete ETL pipeline for {len(symbols)} stocks with {interval} interval")
+            pipeline_results = self.etl_service.run_etl_pipeline(symbols, interval)
+            
+            logger.info(f"ETL pipeline completed successfully!")
+            logger.info(f"Overall success rate: {pipeline_results['overall_success_rate']:.1f}%")
+            logger.info(f"Total records processed: {pipeline_results['total_records_processed']}")
+            
+            return pipeline_results
+        except Exception as e:
+            logger.error(f"ETL pipeline failed: {e}")
+            return {}
+    
+
+    
+    # start_periodic_polling method removed - replaced by streaming functionality
+    
+    def run_single_cycle(self, symbols: Optional[List[str]] = None, interval: str = None):
+        if interval is None:
+            interval = self.default_interval
+        """Run a single ETL cycle"""
+        if symbols is None:
+            symbols = ["AAPL", "MSFT", "GOOGL"]  # Default symbols for single cycle
+        
+        logger.info(f"Running single ETL cycle for {len(symbols)} symbols")
+        return self.process_batch_stocks(symbols, interval)
+    
+    def show_status(self):
+        """Show current ETL system status"""
+        try:
+            status = self.etl_service.get_etl_status()
+            
+            print("\n=== Intraday ETL System Status ===")
+            print(f"Running: {status['is_running']}")
+            print(f"Last Run: {status['last_run']}")
+            print(f"Total Jobs (7 days): {status['total_jobs']}")
+            print(f"Successful: {status['successful_jobs']}")
+            print(f"Failed: {status['failed_jobs']}")
+            print(f"Running: {status['running_jobs']}")
+            
+            return status
+        except Exception as e:
+            logger.error(f"Failed to get ETL status: {e}")
+            return None
+    
+    def stop(self):
+        """Stop the ETL runner"""
+        self.is_running = False
+        logger.info("ETL runner stopped")
+    
+    def start_streaming(self, 
+                       symbols: Optional[List[str]] = None,
+                       interval_minutes: int = 5,
+                       max_iterations: Optional[int] = None) -> bool:
+        """Start real-time data streaming"""
+        try:
+            if symbols is None:
+                symbols = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA"]  # Default symbols for streaming
+            
+            logger.info(f"Starting real-time data streaming for {len(symbols)} symbols every {interval_minutes} minutes")
+            
+            success = self.streaming_service.start_streaming(
+                symbols=symbols,
+                interval_minutes=interval_minutes,
+                max_iterations=max_iterations
+            )
+            
+            if success:
+                logger.info("Data streaming started successfully")
+                return True
+            else:
+                logger.error("Failed to start data streaming")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error starting streaming: {e}")
+            return False
+    
+    def stop_streaming(self) -> bool:
+        """Stop real-time data streaming"""
+        try:
+            success = self.streaming_service.stop_streaming()
+            if success:
+                logger.info("Data streaming stopped successfully")
+                return True
+            else:
+                logger.error("Failed to stop data streaming")
+                return False
+        except Exception as e:
+            logger.error(f"Error stopping streaming: {e}")
+            return False
+    
+    def get_streaming_status(self) -> Dict[str, Any]:
+        """Get current streaming service status"""
+        try:
+            return self.streaming_service.get_streaming_status()
+        except Exception as e:
+            logger.error(f"Error getting streaming status: {e}")
+            # Return a basic status even if database is not available
+            return {
+                'is_running': False,
+                'stop_event_set': True,
+                'thread_alive': False,
+                'timestamp': datetime.utcnow().isoformat(),
+                'error': str(e)
+            }
+    
+    def start_continuous_polling(self, 
+                               interval_minutes: int = 5,
+                               symbols: Optional[List[str]] = None,
+                               max_iterations: Optional[int] = None) -> Dict[str, Any]:
+        """Start continuous polling with the polling manager"""
+        try:
+            if symbols is None:
+                symbols = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA"]  # Default symbols for continuous polling
+            
+            logger.info(f"Starting continuous polling for {len(symbols)} symbols every {interval_minutes} minutes")
+            
+            from alpha_vantage_intraday.DATA_STREAMING.polling_manager import PollingConfig
+            
+            config = PollingConfig(
+                interval_minutes=interval_minutes,
+                max_iterations=max_iterations,
+                symbols=symbols,
+                interval="5min",
+                batch_size=10
+            )
+            
+            results = self.polling_manager.continuous_polling(config)
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error in continuous polling: {e}")
+            return {}
+    
+    def start_market_hours_polling(self, 
+                                 interval_minutes: int = 5,
+                                 symbols: Optional[List[str]] = None,
+                                 max_iterations: Optional[int] = None) -> Dict[str, Any]:
+        """Start market hours polling"""
+        try:
+            if symbols is None:
+                symbols = ["AAPL", "GOOGL", "MSFT", "AMZN", "TSLA"]  # Default symbols for market hours polling
+            
+            logger.info(f"Starting market hours polling for {len(symbols)} symbols every {interval_minutes} minutes")
+            
+            from alpha_vantage_intraday.DATA_STREAMING.polling_manager import PollingConfig
+            
+            config = PollingConfig(
+                interval_minutes=interval_minutes,
+                max_iterations=max_iterations,
+                symbols=symbols,
+                interval="5min",
+                batch_size=10
+            )
+            
+            results = self.polling_manager.market_hours_polling(config)
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error in market hours polling: {e}")
+            return {}
+    
+    def start_adaptive_polling(self, 
+                             interval_minutes: int = 5,
+                             symbols: Optional[List[str]] = None,
+                             max_iterations: Optional[int] = None) -> Dict[str, Any]:
+        """Start adaptive polling"""
+        try:
+            if symbols is None:
+                symbols = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA"]  # Default symbols for adaptive polling
+            
+            logger.info(f"Starting adaptive polling for {len(symbols)} symbols every {interval_minutes} minutes")
+            
+            from alpha_vantage_intraday.DATA_STREAMING.polling_manager import PollingConfig
+            
+            config = PollingConfig(
+                interval_minutes=interval_minutes,
+                max_iterations=max_iterations,
+                symbols=symbols,
+                interval="5min",
+                batch_size=10
+            )
+            
+            results = self.polling_manager.adaptive_polling(config)
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error in adaptive polling: {e}")
+            return {}
+    
+    def schedule_market_job(self, 
+                          job_name: str,
+                          symbols: List[str],
+                          interval_minutes: int = 5,
+                          job_type: str = "market_hours") -> bool:
+        """Schedule a market-aware job"""
+        try:
+            if job_type == "market_hours":
+                success = self.market_scheduler.schedule_market_hours_job(
+                    job_name, symbols, interval_minutes
+                )
+            elif job_type == "pre_market":
+                success = self.market_scheduler.schedule_pre_market_job(
+                    job_name, symbols, interval_minutes
+                )
+            elif job_type == "after_hours":
+                success = self.market_scheduler.schedule_after_hours_job(
+                    job_name, symbols, interval_minutes
+                )
+            else:
+                logger.error(f"Unknown job type: {job_type}")
+                return False
+            
+            if success:
+                logger.info(f"Market job '{job_name}' scheduled successfully")
+                return True
+            else:
+                logger.error(f"Failed to schedule market job '{job_name}'")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error scheduling market job: {e}")
+            return False
+    
+    def run_scheduled_jobs(self) -> Dict[str, Any]:
+        """Run all scheduled market jobs"""
+        try:
+            results = self.market_scheduler.run_scheduled_jobs()
+            return results
+        except Exception as e:
+            logger.error(f"Error running scheduled jobs: {e}")
+            return {}
+    
+    def get_scheduled_jobs(self) -> Dict[str, Any]:
+        """Get information about scheduled jobs"""
+        try:
+            return self.market_scheduler.get_scheduled_jobs()
+        except Exception as e:
+            logger.error(f"Error getting scheduled jobs: {e}")
+            return {}
+
+def main():
+    """Main function for triggering ETL pipeline operations"""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Intraday Stock Data ETL Pipeline Trigger')
+    parser.add_argument('--init-db', action='store_true', help='Initialize database tables')
+    parser.add_argument('--single', type=str, help='Process single stock intraday data by symbol')
+    parser.add_argument('--batch', nargs='+', help='Process multiple stocks intraday data by symbols')
+
+    parser.add_argument('--interval', type=str, default=None, 
+                       choices=['1min', '5min', '15min', '30min', '60min'],
+                       help='Intraday interval (default: from environment or 5min)')
+    parser.add_argument('--status', action='store_true', help='Show ETL system status')
+    # --poll and --poll-interval removed - replaced by streaming functionality
+    parser.add_argument('--cycle', action='store_true', help='Run a single ETL cycle')
+    parser.add_argument('--pipeline', action='store_true', help='Run complete ETL pipeline with detailed stats')
+    
+    # Streaming and advanced polling arguments
+    parser.add_argument('--stream', action='store_true', help='Start real-time data streaming')
+    parser.add_argument('--stream-interval', type=int, default=None, 
+                       help='Streaming interval in minutes (default: from environment or 5)')
+    parser.add_argument('--stream-max-iterations', type=int, 
+                       help='Maximum streaming iterations (default: infinite)')
+    parser.add_argument('--continuous-poll', action='store_true', help='Start continuous polling')
+    parser.add_argument('--market-hours-poll', action='store_true', help='Start market hours polling')
+    parser.add_argument('--adaptive-poll', action='store_true', help='Start adaptive polling')
+    parser.add_argument('--poll-max-iterations', type=int, 
+                       help='Maximum polling iterations (default: infinite)')
+    
+    # Market scheduling arguments
+    parser.add_argument('--schedule-market-job', type=str, 
+                       help='Schedule a market hours job (provide job name)')
+    parser.add_argument('--schedule-pre-market-job', type=str, 
+                       help='Schedule a pre-market job (provide job name)')
+    parser.add_argument('--schedule-after-hours-job', type=str, 
+                       help='Schedule an after-hours job (provide job name)')
+    parser.add_argument('--job-symbols', nargs='+', 
+                       help='Symbols for scheduled jobs (use with schedule arguments)')
+    parser.add_argument('--job-interval', type=int, default=None, 
+                       help='Job interval in minutes (default: from environment or 5)')
+    parser.add_argument('--run-scheduled-jobs', action='store_true', help='Run all scheduled jobs')
+    parser.add_argument('--show-scheduled-jobs', action='store_true', help='Show all scheduled jobs')
+    
+    # Status and control arguments
+    parser.add_argument('--streaming-status', action='store_true', help='Show streaming service status')
+    parser.add_argument('--stop-streaming', action='store_true', help='Stop real-time streaming')
+    
+    args = parser.parse_args()
+    
+    try:
+        if args.init_db:
+            logger.info("Initializing database...")
+            init_db()
+            logger.info("Database initialized successfully!")
+            return
+        
+        runner = ETLRunner()
+        
+        if args.single:
+            runner.process_single_stock(args.single, args.interval)
+            return
+        
+        if args.batch:
+            if args.pipeline:
+                runner.run_etl_pipeline(args.batch, args.interval)
+            else:
+                runner.process_batch_stocks(args.batch, args.interval)
+            return
+        
+
+        
+        if args.status:
+            runner.show_status()
+            return
+        
+        if args.cycle:
+            runner.run_single_cycle(interval=args.interval)
+            return
+        
+        # Old --poll argument handling removed - replaced by streaming functionality
+        
+        # Handle streaming and advanced polling
+        if args.stream:
+            stream_interval = args.stream_interval or runner.default_polling_interval
+            logger.info(f"Starting real-time data streaming every {stream_interval} minutes...")
+            runner.start_streaming(
+                interval_minutes=stream_interval,
+                max_iterations=args.stream_max_iterations
+            )
+            return
+        
+        if args.continuous_poll:
+            logger.info(f"Starting continuous polling every {args.poll_interval} minutes...")
+            runner.start_continuous_polling(
+                interval_minutes=args.poll_interval,
+                max_iterations=args.poll_max_iterations
+            )
+            return
+        
+        if args.market_hours_poll:
+            logger.info(f"Starting market hours polling every {args.poll_interval} minutes...")
+            runner.start_market_hours_polling(
+                interval_minutes=args.poll_interval,
+                max_iterations=args.poll_max_iterations
+            )
+            return
+        
+        if args.adaptive_poll:
+            logger.info(f"Starting adaptive polling every {args.poll_interval} minutes...")
+            runner.start_adaptive_polling(
+                interval_minutes=args.poll_interval,
+                max_iterations=args.poll_max_iterations
+            )
+            return
+        
+        # Handle market scheduling
+        if args.schedule_market_job:
+            if not args.job_symbols:
+                logger.error("--job-symbols required when scheduling jobs")
+                return
+            
+            job_interval = args.job_interval or runner.default_polling_interval
+            success = runner.schedule_market_job(
+                args.schedule_market_job,
+                args.job_symbols,
+                job_interval,
+                "market_hours"
+            )
+            if success:
+                logger.info(f"Market hours job '{args.schedule_market_job}' scheduled successfully")
+            return
+        
+        if args.schedule_pre_market_job:
+            if not args.job_symbols:
+                logger.error("--job-symbols required when scheduling jobs")
+                return
+            
+            job_interval = args.job_interval or runner.default_polling_interval
+            success = runner.schedule_market_job(
+                args.schedule_pre_market_job,
+                args.job_symbols,
+                job_interval,
+                "pre_market"
+            )
+            if success:
+                logger.info(f"Pre-market job '{args.schedule_pre_market_job}' scheduled successfully")
+            return
+        
+        if args.schedule_after_hours_job:
+            if not args.job_symbols:
+                logger.error("--job-symbols required when scheduling jobs")
+                return
+            
+            job_interval = args.job_interval or runner.default_polling_interval
+            success = runner.schedule_market_job(
+                args.schedule_after_hours_job,
+                args.job_symbols,
+                job_interval,
+                "after_hours"
+            )
+            if success:
+                logger.info(f"After-hours job '{args.schedule_after_hours_job}' scheduled successfully")
+            return
+        
+        if args.run_scheduled_jobs:
+            logger.info("Running all scheduled jobs...")
+            results = runner.run_scheduled_jobs()
+            logger.info(f"Scheduled jobs completed: {results}")
+            return
+        
+        if args.show_scheduled_jobs:
+            jobs_info = runner.get_scheduled_jobs()
+            print("\n=== Scheduled Jobs ===")
+            print(f"Total Jobs: {jobs_info.get('total_jobs', 0)}")
+            print(f"Current Time: {jobs_info.get('current_time', 'Unknown')}")
+            
+            market_status = jobs_info.get('market_status', {})
+            print(f"Market Open: {market_status.get('is_market_open', 'Unknown')}")
+            print(f"Pre-Market: {market_status.get('is_pre_market', 'Unknown')}")
+            print(f"After Hours: {market_status.get('is_after_hours', 'Unknown')}")
+            print(f"Next Market Open: {market_status.get('next_market_open', 'Unknown')}")
+            print(f"Next Market Close: {market_status.get('next_market_close', 'Unknown')}")
+            
+            if jobs_info.get('jobs'):
+                print("\nJob Details:")
+                for job_name, job_config in jobs_info['jobs'].items():
+                    print(f"  {job_name}: {job_config['type']} - {job_config['interval_minutes']}min - {len(job_config['symbols'])} symbols")
+            return
+        
+        # Handle status and control
+        if args.streaming_status:
+            status = runner.get_streaming_status()
+            print("\n=== Streaming Service Status ===")
+            print(f"Running: {status.get('is_running', 'Unknown')}")
+            print(f"Stop Event Set: {status.get('stop_event_set', 'Unknown')}")
+            print(f"Thread Alive: {status.get('thread_alive', 'Unknown')}")
+            print(f"Timestamp: {status.get('timestamp', 'Unknown')}")
+            return
+        
+        if args.stop_streaming:
+            logger.info("Stopping real-time streaming...")
+            success = runner.stop_streaming()
+            if success:
+                logger.info("Streaming stopped successfully")
+            else:
+                logger.error("Failed to stop streaming")
+            return
+        
+        # If no arguments provided, show help
+        if len(sys.argv) == 1:
+            parser.print_help()
+            return
+        
+    except KeyboardInterrupt:
+        logger.info("Process interrupted by user")
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
