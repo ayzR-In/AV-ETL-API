@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 
 from alpha_vantage_intraday.DB import init_db
 from alpha_vantage_intraday.intraday_pipeline import ETLService
-from alpha_vantage_intraday.DATA_STREAMING import DataStreamingService, PollingManager, MarketScheduler
+from alpha_vantage_intraday.STREAM_N_POLLING import DataStreamingService, PollingManager
 
 # Load environment variables
 load_dotenv()
@@ -44,12 +44,9 @@ class ETLRunner:
         self.default_polling_interval = int(os.getenv('DEFAULT_POLLING_INTERVAL', '5'))
         self.batch_size = int(os.getenv('BATCH_SIZE', '10'))
         
-
-        
         # Initialize streaming services
         self.streaming_service = DataStreamingService()
         self.polling_manager = PollingManager()
-        self.market_scheduler = MarketScheduler()
         
         # Signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -216,7 +213,7 @@ class ETLRunner:
             
             logger.info(f"Starting continuous polling for {len(symbols)} symbols every {interval_minutes} minutes")
             
-            from alpha_vantage_intraday.DATA_STREAMING.polling_manager import PollingConfig
+            from alpha_vantage_intraday.STREAM_N_POLLING.polling_manager import PollingConfig
             
             config = PollingConfig(
                 interval_minutes=interval_minutes,
@@ -244,7 +241,7 @@ class ETLRunner:
             
             logger.info(f"Starting market hours polling for {len(symbols)} symbols every {interval_minutes} minutes")
             
-            from alpha_vantage_intraday.DATA_STREAMING.polling_manager import PollingConfig
+            from alpha_vantage_intraday.STREAM_N_POLLING.polling_manager import PollingConfig
             
             config = PollingConfig(
                 interval_minutes=interval_minutes,
@@ -261,84 +258,9 @@ class ETLRunner:
             logger.error(f"Error in market hours polling: {e}")
             return {}
     
-    def start_adaptive_polling(self, 
-                             interval_minutes: int = 5,
-                             symbols: Optional[List[str]] = None,
-                             max_iterations: Optional[int] = None) -> Dict[str, Any]:
-        """Start adaptive polling"""
-        try:
-            if symbols is None:
-                symbols = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA"]  # Default symbols for adaptive polling
-            
-            logger.info(f"Starting adaptive polling for {len(symbols)} symbols every {interval_minutes} minutes")
-            
-            from alpha_vantage_intraday.DATA_STREAMING.polling_manager import PollingConfig
-            
-            config = PollingConfig(
-                interval_minutes=interval_minutes,
-                max_iterations=max_iterations,
-                symbols=symbols,
-                interval="5min",
-                batch_size=10
-            )
-            
-            results = self.polling_manager.adaptive_polling(config)
-            return results
-            
-        except Exception as e:
-            logger.error(f"Error in adaptive polling: {e}")
-            return {}
+
     
-    def schedule_market_job(self, 
-                          job_name: str,
-                          symbols: List[str],
-                          interval_minutes: int = 5,
-                          job_type: str = "market_hours") -> bool:
-        """Schedule a market-aware job"""
-        try:
-            if job_type == "market_hours":
-                success = self.market_scheduler.schedule_market_hours_job(
-                    job_name, symbols, interval_minutes
-                )
-            elif job_type == "pre_market":
-                success = self.market_scheduler.schedule_pre_market_job(
-                    job_name, symbols, interval_minutes
-                )
-            elif job_type == "after_hours":
-                success = self.market_scheduler.schedule_after_hours_job(
-                    job_name, symbols, interval_minutes
-                )
-            else:
-                logger.error(f"Unknown job type: {job_type}")
-                return False
-            
-            if success:
-                logger.info(f"Market job '{job_name}' scheduled successfully")
-                return True
-            else:
-                logger.error(f"Failed to schedule market job '{job_name}'")
-                return False
-                
-        except Exception as e:
-            logger.error(f"Error scheduling market job: {e}")
-            return False
-    
-    def run_scheduled_jobs(self) -> Dict[str, Any]:
-        """Run all scheduled market jobs"""
-        try:
-            results = self.market_scheduler.run_scheduled_jobs()
-            return results
-        except Exception as e:
-            logger.error(f"Error running scheduled jobs: {e}")
-            return {}
-    
-    def get_scheduled_jobs(self) -> Dict[str, Any]:
-        """Get information about scheduled jobs"""
-        try:
-            return self.market_scheduler.get_scheduled_jobs()
-        except Exception as e:
-            logger.error(f"Error getting scheduled jobs: {e}")
-            return {}
+
 
 def main():
     """Main function for triggering ETL pipeline operations"""
@@ -365,23 +287,11 @@ def main():
                        help='Maximum streaming iterations (default: infinite)')
     parser.add_argument('--continuous-poll', action='store_true', help='Start continuous polling')
     parser.add_argument('--market-hours-poll', action='store_true', help='Start market hours polling')
-    parser.add_argument('--adaptive-poll', action='store_true', help='Start adaptive polling')
+
     parser.add_argument('--poll-max-iterations', type=int, 
                        help='Maximum polling iterations (default: infinite)')
     
-    # Market scheduling arguments
-    parser.add_argument('--schedule-market-job', type=str, 
-                       help='Schedule a market hours job (provide job name)')
-    parser.add_argument('--schedule-pre-market-job', type=str, 
-                       help='Schedule a pre-market job (provide job name)')
-    parser.add_argument('--schedule-after-hours-job', type=str, 
-                       help='Schedule an after-hours job (provide job name)')
-    parser.add_argument('--job-symbols', nargs='+', 
-                       help='Symbols for scheduled jobs (use with schedule arguments)')
-    parser.add_argument('--job-interval', type=int, default=None, 
-                       help='Job interval in minutes (default: from environment or 5)')
-    parser.add_argument('--run-scheduled-jobs', action='store_true', help='Run all scheduled jobs')
-    parser.add_argument('--show-scheduled-jobs', action='store_true', help='Show all scheduled jobs')
+
     
     # Status and control arguments
     parser.add_argument('--streaming-status', action='store_true', help='Show streaming service status')
@@ -447,87 +357,9 @@ def main():
             )
             return
         
-        if args.adaptive_poll:
-            logger.info(f"Starting adaptive polling every {args.poll_interval} minutes...")
-            runner.start_adaptive_polling(
-                interval_minutes=args.poll_interval,
-                max_iterations=args.poll_max_iterations
-            )
-            return
+
         
-        # Handle market scheduling
-        if args.schedule_market_job:
-            if not args.job_symbols:
-                logger.error("--job-symbols required when scheduling jobs")
-                return
-            
-            job_interval = args.job_interval or runner.default_polling_interval
-            success = runner.schedule_market_job(
-                args.schedule_market_job,
-                args.job_symbols,
-                job_interval,
-                "market_hours"
-            )
-            if success:
-                logger.info(f"Market hours job '{args.schedule_market_job}' scheduled successfully")
-            return
-        
-        if args.schedule_pre_market_job:
-            if not args.job_symbols:
-                logger.error("--job-symbols required when scheduling jobs")
-                return
-            
-            job_interval = args.job_interval or runner.default_polling_interval
-            success = runner.schedule_market_job(
-                args.schedule_pre_market_job,
-                args.job_symbols,
-                job_interval,
-                "pre_market"
-            )
-            if success:
-                logger.info(f"Pre-market job '{args.schedule_pre_market_job}' scheduled successfully")
-            return
-        
-        if args.schedule_after_hours_job:
-            if not args.job_symbols:
-                logger.error("--job-symbols required when scheduling jobs")
-                return
-            
-            job_interval = args.job_interval or runner.default_polling_interval
-            success = runner.schedule_market_job(
-                args.schedule_after_hours_job,
-                args.job_symbols,
-                job_interval,
-                "after_hours"
-            )
-            if success:
-                logger.info(f"After-hours job '{args.schedule_after_hours_job}' scheduled successfully")
-            return
-        
-        if args.run_scheduled_jobs:
-            logger.info("Running all scheduled jobs...")
-            results = runner.run_scheduled_jobs()
-            logger.info(f"Scheduled jobs completed: {results}")
-            return
-        
-        if args.show_scheduled_jobs:
-            jobs_info = runner.get_scheduled_jobs()
-            print("\n=== Scheduled Jobs ===")
-            print(f"Total Jobs: {jobs_info.get('total_jobs', 0)}")
-            print(f"Current Time: {jobs_info.get('current_time', 'Unknown')}")
-            
-            market_status = jobs_info.get('market_status', {})
-            print(f"Market Open: {market_status.get('is_market_open', 'Unknown')}")
-            print(f"Pre-Market: {market_status.get('is_pre_market', 'Unknown')}")
-            print(f"After Hours: {market_status.get('is_after_hours', 'Unknown')}")
-            print(f"Next Market Open: {market_status.get('next_market_open', 'Unknown')}")
-            print(f"Next Market Close: {market_status.get('next_market_close', 'Unknown')}")
-            
-            if jobs_info.get('jobs'):
-                print("\nJob Details:")
-                for job_name, job_config in jobs_info['jobs'].items():
-                    print(f"  {job_name}: {job_config['type']} - {job_config['interval_minutes']}min - {len(job_config['symbols'])} symbols")
-            return
+
         
         # Handle status and control
         if args.streaming_status:

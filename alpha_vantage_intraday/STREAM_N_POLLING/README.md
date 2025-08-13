@@ -1,17 +1,17 @@
-# DATA_STREAMING Package
+# STREAM_N_POLLING Package
 
 ## Overview
 
-The `DATA_STREAMING` package provides comprehensive real-time data ingestion simulation for stock market data. It includes multiple streaming strategies, polling mechanisms, and market-aware scheduling to simulate real-time data ingestion from the Alpha Vantage API.
+The `STREAM_N_POLLING` package provides comprehensive real-time data ingestion simulation for stock market data. It includes multiple streaming strategies and polling mechanisms to simulate real-time data ingestion from the Alpha Vantage API.
 
 ## 🏗️ Architecture
 
 ```
-alpha_vantage_intraday/DATA_STREAMING/
+alpha_vantage_intraday/STREAM_N_POLLING/
 ├── __init__.py              # Package initialization and exports
 ├── streaming_service.py     # Main streaming service with threading
 ├── polling_manager.py       # Advanced polling strategies
-├── market_scheduler.py      # Market-aware job scheduling
+
 └── README.md               # This documentation
 ```
 
@@ -31,7 +31,7 @@ alpha_vantage_intraday/DATA_STREAMING/
 
 **Usage Example**:
 ```python
-from alpha_vantage_intraday.DATA_STREAMING import DataStreamingService
+from alpha_vantage_intraday.STREAM_N_POLLING import DataStreamingService
 
 # Initialize service
 streaming = DataStreamingService()
@@ -67,14 +67,14 @@ streaming.stop_streaming()
 - **Use Case**: Trading day data collection
 - **Features**: Market time awareness, extended hours support
 
-#### c) Adaptive Polling
+
 - **Description**: Adjusts polling frequency based on data availability
 - **Use Case**: Dynamic data collection
 - **Features**: Frequency adjustment, performance optimization
 
 **Usage Example**:
 ```python
-from alpha_vantage_intraday.DATA_STREAMING import PollingManager, PollingConfig
+from alpha_vantage_intraday.STREAM_N_POLLING import PollingManager, PollingConfig
 
 # Initialize manager
 polling = PollingManager()
@@ -92,60 +92,12 @@ results = polling.continuous_polling(config)
 # OR
 results = polling.market_hours_polling(config)
 # OR
-results = polling.adaptive_polling(config)
+
 ```
 
-### 3. MarketScheduler (`market_scheduler.py`)
 
-**Purpose**: Market-aware job scheduling and execution.
 
-**Key Features**:
-- **Market Hours Detection**: Automatically detects market open/close
-- **Pre-Market Support**: 4 AM - 9 AM UTC
-- **After-Hours Support**: 4 PM - 8 PM UTC
-- **Trading Days**: Monday-Friday (configurable)
-- **Job Scheduling**: Schedule jobs for specific market periods
-- **Automatic Execution**: Run jobs based on market conditions
 
-**Market Schedule**:
-- **Market Hours**: 9:00 AM - 4:00 PM UTC (Monday-Friday)
-- **Pre-Market**: 4:00 AM - 9:00 AM UTC (Monday-Friday)
-- **After Hours**: 4:00 PM - 8:00 PM UTC (Monday-Friday)
-
-**Usage Example**:
-```python
-from alpha_vantage_intraday.DATA_STREAMING import MarketScheduler
-
-# Initialize scheduler
-scheduler = MarketScheduler()
-
-# Schedule market hours job
-scheduler.schedule_market_hours_job(
-    job_name="daily_trading",
-    symbols=["AAPL", "MSFT", "GOOGL"],
-    interval_minutes=5
-)
-
-# Schedule pre-market job
-scheduler.schedule_pre_market_job(
-    job_name="pre_market_analysis",
-    symbols=["SPY", "QQQ"],
-    interval_minutes=15
-)
-
-# Check market status
-if scheduler.is_market_open():
-    print("Market is open!")
-elif scheduler.is_pre_market():
-    print("Pre-market trading")
-elif scheduler.is_after_hours():
-    print("After-hours trading")
-else:
-    print("Market is closed")
-
-# Run scheduled jobs
-results = scheduler.run_scheduled_jobs()
-```
 
 ## 🎯 Command Line Interface
 
@@ -174,30 +126,13 @@ python main.py --continuous-poll --poll-interval 5
 # Market hours polling
 python main.py --market-hours-poll --poll-interval 5
 
-# Adaptive polling
-python main.py --adaptive-poll --poll-interval 5
+
 
 # Polling with max iterations
 python main.py --market-hours-poll --poll-interval 5 --poll-max-iterations 50
 ```
 
-### Market Scheduling
-```bash
-# Schedule market hours job
-python main.py --schedule-market-job "daily_trading" --job-symbols AAPL MSFT GOOGL --job-interval 5
 
-# Schedule pre-market job
-python main.py --schedule-pre-market-job "pre_market" --job-symbols SPY QQQ --job-interval 15
-
-# Schedule after-hours job
-python main.py --schedule-after-hours-job "after_hours" --job-symbols AAPL MSFT --job-interval 15
-
-# Run all scheduled jobs
-python main.py --run-scheduled-jobs
-
-# Show scheduled jobs
-python main.py --show-scheduled-jobs
-```
 
 ## 🔧 Configuration
 
@@ -227,17 +162,7 @@ class PollingConfig:
     max_retries: int = 3               # Maximum retry attempts
 ```
 
-### Market Schedule Configuration
-```python
-@dataclass
-class MarketSchedule:
-    open_hour: int = 9                # Market open (9 AM UTC)
-    close_hour: int = 16              # Market close (4 PM UTC)
-    pre_market_start: int = 4         # Pre-market start (4 AM UTC)
-    after_hours_end: int = 20         # After-hours end (8 PM UTC)
-    timezone: str = "UTC"             # Timezone
-    trading_days: List[int] = [0,1,2,3,4]  # Monday-Friday
-```
+
 
 ## 📊 Monitoring and Statistics
 
@@ -306,7 +231,7 @@ jobs_info = market_scheduler.get_scheduled_jobs()
 
 ## 🔄 Integration with ETL Pipeline
 
-The DATA_STREAMING package seamlessly integrates with the main ETL pipeline:
+The STREAM_N_POLLING package seamlessly integrates with the main ETL pipeline:
 
 ```python
 # The streaming services use the ETLService internally
@@ -341,7 +266,7 @@ from alpha_vantage_intraday.intraday_pipeline import ETLService
 ### Import Testing
 ```bash
 # Test package imports
-python -c "from alpha_vantage_intraday.DATA_STREAMING import DataStreamingService, PollingManager, MarketScheduler; print('✅ Imports successful!')"
+python -c "from alpha_vantage_intraday.STREAM_N_POLLING import DataStreamingService, PollingManager; print('✅ Imports successful!')"
 ```
 
 ### Functionality Testing
@@ -369,7 +294,7 @@ python main.py --schedule-market-job "test" --job-symbols AAPL --job-interval 1
 ### 3. **Use Appropriate Strategies**
 - **Market Hours**: For trading day data
 - **Continuous**: For 24/7 monitoring
-- **Adaptive**: For dynamic data requirements
+
 
 ### 4. **Handle Errors Gracefully**
 - Implement proper error handling in callbacks
